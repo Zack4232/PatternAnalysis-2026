@@ -112,3 +112,30 @@ data-check scripts, and preparing documentation.
 Environment and data-check scripts were run on Rangpur and their
 outputs were inspected. Model implementation and training have not
 started. This disclosure will be updated as the project develops.
+
+## Initial Visual Inspection
+
+The figure below shows training case 004 at week 0. Of its 60 slices,
+31 contain prostate label 5. Slices 22, 30, 37, 44, and 52 were selected
+across the prostate-positive slice range.
+
+![Training MRI, ground-truth masks, and organ overlays](figures/training_data_preview.png)
+
+The five displayed pairs show no obvious global displacement or flip.
+This is a limited visual check, not confirmation of all cases or
+fine boundary accuracy.
+
+The prostate label occupies a small region in slices 22 and 52 and
+larger regions in the selected intermediate slices. This supports
+including small-target slices in later performance analysis.
+
+Images are shown in stored array orientation. Anatomical directions
+have not been assigned. These are ground-truth previews, not model
+predictions or model failure cases.
+
+To reproduce the figure in an environment with NumPy, NiBabel, and
+Matplotlib installed, run from this project directory:
+
+```bash
+python visualize_data.py
+```
