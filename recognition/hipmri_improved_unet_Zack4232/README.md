@@ -139,3 +139,36 @@ Matplotlib installed, run from this project directory:
 ```bash
 python visualize_data.py
 ```
+
+## Dataset Loader
+
+`dataset.py` pairs images and masks using case, week, and slice IDs.
+It preserves the supplied training, validation, and test splits.
+
+Each sample contains:
+- `image`: float32 tensor with shape [1, 256, 128].
+- `mask`: int64 tensor with shape [256, 128].
+- `case_id`, `week`, and `slice_id`: sample identifiers.
+
+Images are standardized using the mean and population standard
+deviation of each full slice, with a minimum denominator of 1e-8.
+Masks are not normalized or remapped.
+
+The loader checks shapes, affine alignment, finite values, integer
+mask values, and the allowed label range of 0-5.
+
+File indexing reproduced the audited split counts and found no
+cross-split case overlap. A loading smoke test verified one training
+sample and a batch of four samples. The first sample's mask matched
+the original file exactly, and its normalized image had approximately
+zero mean and unit standard deviation.
+
+These checks do not constitute full dataset validation. Data
+augmentation is not implemented yet.
+
+### AI Assistance Update
+
+ChatGPT/Codex assisted with drafting the dataset loader and its
+smoke-test commands. The commands were executed on Rangpur, and the
+reported checks passed. Full dataset validation and model training
+remain pending.
