@@ -172,3 +172,40 @@ ChatGPT/Codex assisted with drafting the dataset loader and its
 smoke-test commands. The commands were executed on Rangpur, and the
 reported checks passed. Full dataset validation and model training
 remain pending.
+
+## Standard 2D U-Net Baseline
+
+`modules.py` implements a standard U-Net baseline with four
+downsampling stages, skip connections, transposed-convolution
+upsampling, and two padded 3x3 convolutions per feature block.
+
+The configuration uses one input channel, six output classes,
+and 32 base channels. It contains 7,759,686 trainable parameters.
+The output contains raw logits; softmax is not applied in the model.
+
+Reference: Ronneberger et al. (2015), U-Net: Convolutional Networks
+for Biomedical Image Segmentation.
+https://arxiv.org/abs/1505.04597
+
+This baseline uses padded convolutions and a base width of 32.
+It is not an exact reproduction of every original paper setting
+and is not the project's planned Improved U-Net model.
+
+### Model Smoke Test
+
+`check_model.py` was run on an NVIDIA A100-PCIE-40GB through
+`check_model.sh`.
+
+- Input shape: [2, 1, 256, 128].
+- Output shape: [2, 6, 256, 128].
+- Initial cross-entropy: approximately 1.6542.
+- All trainable parameters received finite gradients.
+- The output-layer weights changed after one optimizer step.
+- Model parameters remained finite after the update.
+
+This verifies a forward pass, backward pass, and parameter update.
+It does not establish segmentation accuracy, convergence, or
+generalization. The two samples came from the training split.
+
+ChatGPT/Codex assisted with drafting the baseline and smoke-test
+scripts. The test was executed on Rangpur and its output was inspected.
