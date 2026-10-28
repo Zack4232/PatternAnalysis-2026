@@ -124,8 +124,11 @@ class HipMRIDataset(Dataset):
                 f"Invalid image/mask shapes: {x.shape}, {y.shape}; "
                 f"{sample.image_path.name}"
             )
-        if x.shape != (256, 128):
-            raise ValueError(f"Unexpected image shape: {x.shape}")
+        if min(x.shape) < 16 or any(size % 16 for size in x.shape):
+            raise ValueError(
+                f"Image dimensions must be positive multiples of 16: "
+                f"{x.shape}; {sample.image_path.name}"
+            )
         if not np.allclose(
             image.affine, mask.affine, rtol=0, atol=1e-5
         ):

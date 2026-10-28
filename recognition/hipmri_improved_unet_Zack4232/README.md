@@ -265,3 +265,69 @@ ChatGPT/Codex assisted with drafting the metric and overfit-check
 scripts and interpreting their outputs. Metric checks and the
 overfit experiment were executed on Rangpur, and the prediction
 figure was visually inspected.
+
+## Full Training Trial and Variable Image Sizes
+
+The first full training attempt stopped because the loader assumed
+all images had shape 256 x 128. That assumption came from a limited
+93-pair sample and was not valid for the full training set.
+
+A subsequent header audit found:
+- Training: 11,400 pairs at 256 x 128 and 60 pairs at 256 x 144.
+- Validation: 660 pairs at 256 x 128.
+- No image-mask shape mismatches or header read failures.
+
+The loader now accepts paired 2D shapes divisible by 16.
+The previously documented [1, 256, 128] image shape describes the
+initial sample; the general sample format is [1, H, W], with masks
+of shape [H, W].
+
+ShapeBatchSampler groups training samples by shape, shuffles samples
+within each group, and shuffles batch order each epoch. No resizing,
+cropping, padding, or sample removal is used. Coverage checks confirmed
+11,460 unique samples per epoch, in 1,432 batches of eight and one
+batch of four. Both observed shapes loaded successfully.
+
+### Three-Epoch Baseline Trial
+
+Run: train_trial_709996.
+
+The standard U-Net was trained from random initialization using
+cross-entropy, Adam, learning rate 0.001, batch size 8, and seed 42.
+No augmentation or mixed precision was used. Validation did not
+update model parameters, and no test data were evaluated.
+
+| Epoch | Training CE | Validation CE | Validation prostate Dice |
+|---|---:|---:|---:|
+| 1 | 0.250125 | 0.106568 | 0.556327 |
+| 2 | 0.061566 | 0.075206 | 0.710694 |
+| 3 | 0.048912 | 0.076103 | 0.704624 |
+
+Epoch 2 produced the highest validation prostate Dice and was saved
+as best.pt. The last checkpoint corresponds to epoch 3.
+
+Each validation evaluation included 254 prostate-positive slices and
+excluded 406 prostate-negative slices from the primary Dice metric.
+The numbers of negative slices with prostate false positives were
+4, 9, and 7 across epochs 1, 2, and 3.
+
+The three training and validation loops took approximately 289 seconds
+in total, excluding initialization, checkpoint saving, and queue time.
+Recent epochs required about 99 seconds each for training plus
+validation. Peak PyTorch allocated and reserved GPU memory were
+approximately 0.688 GiB and 1.225 GiB, respectively. These are not
+measurements of total GPU process memory.
+
+![Three-epoch baseline trial](figures/train_trial_709996_curves.png)
+
+Configuration, metric history, and per-class validation summaries
+are stored in experiment_records/train_trial_709996/.
+
+This trial establishes full training-loop operability and an initial
+compute estimate. It does not establish test performance or final
+convergence. The small validation decrease at epoch 3 alone is not
+sufficient evidence of overfitting.
+
+ChatGPT/Codex assisted with the training scripts, shape-handling fix,
+checks, and experiment documentation. Commands were executed on
+Rangpur and their reported outputs were inspected.
