@@ -209,3 +209,59 @@ generalization. The two samples came from the training split.
 
 ChatGPT/Codex assisted with drafting the baseline and smoke-test
 scripts. The test was executed on Rangpur and its output was inspected.
+
+## Prostate Dice Evaluation Protocol
+
+Following tutor clarification, prostate test Dice will be calculated
+for each slice whose ground-truth mask contains prostate label 5,
+then averaged equally across those slices. Slices without ground-truth
+prostate pixels will be excluded from this metric. Eligible slices
+with no predicted prostate pixels will receive a Dice score of zero.
+
+Across batches, Dice sums and eligible slice counts are accumulated
+before computing the final mean. Batch means and patient means are
+not averaged to obtain the primary score. If no slices are eligible,
+the metric is undefined and reported as unavailable.
+
+Per-patient results and false positives on ground-truth-negative
+slices will be reported separately.
+
+Synthetic checks in check_metrics.py verified perfect predictions,
+complete misses, partial overlap, excluded negative slices, and
+aggregation across unequal batches.
+
+## Small Training Subset Overfit Check
+
+Standard U-Net was trained from random initialization on training
+case 004, week 0, slices 30, 37, and 44. The run used seed 42,
+cross-entropy loss, Adam with a learning rate of 0.001, and 400
+updates on the same three-slice batch without augmentation.
+
+Cross-entropy decreased from 1.801918 to 0.014945.
+Final mean prostate Dice was 0.987492 across three eligible slices.
+Rectum Dice was 0.968280 on its single eligible slice.
+
+Visual inspection showed close agreement with the training masks.
+Remaining errors were mainly near boundaries. The error panel marks
+all misclassified pixels and does not separate false positives from
+false negatives.
+
+![Training subset overfit check](figures/overfit_709904_predictions.png)
+
+The metric history is saved in
+experiment_records/overfit_709904_history.csv.
+
+The script reported 4.33 seconds for its training and evaluation loop
+and 0.294 GiB peak PyTorch allocated GPU memory. These measurements
+exclude initial data loading and final output generation. They do
+not represent full-dataset training time or total GPU process memory.
+
+This diagnostic supports basic learning-pipeline functionality.
+It is not validation or test performance and does not establish the
+assignment's test Dice target. The final training loss remains to
+be selected using training and validation evidence.
+
+ChatGPT/Codex assisted with drafting the metric and overfit-check
+scripts and interpreting their outputs. Metric checks and the
+overfit experiment were executed on Rangpur, and the prediction
+figure was visually inspected.
