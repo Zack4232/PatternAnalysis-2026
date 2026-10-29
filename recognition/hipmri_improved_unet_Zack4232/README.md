@@ -1,62 +1,30 @@
 # HipMRI Segmentation with 2D Improved U-Net
 
-## Project Scope
+## Project summary
 
-This project studies multi-class segmentation of HipMRI 2D images.
-The planned baseline is standard 2D U-Net, and the main model is
-2D Improved U-Net at COMP3710 Normal difficulty.
+This COMP3710 Normal-difficulty project compares a standard 2D U-Net with a 2D adaptation of the Improved U-Net described by Isensee et al. The task is six-class segmentation of HipMRI slices. The engineering question is whether the architecture improves segmentation enough to justify its compute cost and remaining errors.
 
-The study will examine whether the improved model produces better
-boundaries in difficult regions and whether the gains justify its
-computing cost. The target prostate test Dice is at least 0.75.
+The final Improved U-Net achieved **prostate test Dice 0.80288**, compared with **0.77929** for the standard U-Net trained with the same CE+Dice loss. Both exceed the assignment target of 0.75. The improved model also produced more false positives on prostate-negative slices and required about 2.96 times the measured GPU inference time per slice. It did not improve every class or remove important failure modes.
 
-No model has been implemented or trained yet.
+The models are educational annotation prototypes. Clinical benefit and reduced human editing time were not measured.
 
-## Verified Environment
+## Data and preprocessing
 
-- Platform: Rangpur.
-- GPU: NVIDIA A100-PCIE-40GB.
-- PyTorch: 2.14.1+cu130.
-- PyTorch CUDA build: 13.0.
-- CUDA availability and a small GPU matrix multiplication test passed.
-- The Slurm test job completed with exit code 0.
-- The successful test used partition `comp3710`, account `comp3710`,
-  one GPU, and `--mem=0`.
+The shared Rangpur data root is:
 
-Basic GPU computation has been verified. Full training speed and peak
-memory use have not been measured. Memory settings need review before
-full training.
+```text
+/home/groups/comp3710/HipMRI_Study_open/keras_slices_data
+```
 
-## Data Audit
+| Split | Cases | Slices | Case IDs |
+|---|---:|---:|---|
+| Training | 31 | 11,460 | 004–033 and 035 |
+| Validation | 4 | 660 | 036–039 |
+| Test | 3 | 540 | 040–042 |
 
-Data location on Rangpur:
+Files are paired by `(case_id, week, slice_id)`, rather than directory order. The audit found no missing pairs, duplicate keys, unexpected filenames, or case overlap between splits. Week 0 is before treatment; weeks 1–7 are weekly treatment acquisitions, as described in the supplied data documentation.
 
-`/home/groups/comp3710/HipMRI_Study_open/keras_slices_data`
-
-| Split | Number of Cases | Image-Mask Pairs |
-|---|---:|---:|
-| Training | 31 | 11,460 |
-| Validation | 4 | 660 |
-| Test | 3 | 540 |
-| Total | 38 | 12,660 |
-
-There is no overlap between splits based on case IDs in filenames.
-Images and masks match by case, week, and slice number. No missing
-pairs, duplicate keys, or unexpected filenames were found.
-
-A sample of 93 training pairs had matching shapes of 256 x 128.
-No shape or affine mismatch, non-finite values, or non-integer mask
-values were found in this sample. Full content validation is pending.
-
-The test set contains only three cases. Final evaluation should
-include per-case results rather than treating slices as independent
-patients.
-
-## Label Definitions
-
-The original dataset's `BriefDataDescription.txt` defines:
-
-| Value | Class |
+| Label | Class |
 |---|---|
 | 0 | Background |
 | 1 | Body |
@@ -65,269 +33,281 @@ The original dataset's `BriefDataDescription.txt` defines:
 | 4 | Rectum |
 | 5 | Prostate |
 
-Week 0 was acquired before treatment. Weeks 1-7 were acquired weekly
-during treatment.
+Images are standardized independently using the mean and population standard deviation of the full slice, with a minimum denominator of `1e-8`. This uses no ground-truth mask or statistics from other patients. Masks remain integer labels without normalization or remapping. The loader checks paired shapes, affine agreement, finite values, integer labels, and the label range. Images have shape `[1, H, W]`; masks have shape `[H, W]`. One-hot encoding is created inside the soft Dice loss; cross-entropy receives integer targets.
 
-Labels 0-5 were observed in the sampled course 2D data. Visual checks
-of alignment and consistency with the original label definitions
-are pending. The physical meaning of the stored pixel spacing has
-not yet been verified.
+An initial 93-pair training sample contained only 256 × 128 images. A later full training run exposed this incomplete assumption. The subsequent header audit found 11,400 training pairs at 256 × 128 and 60 at 256 × 144 (case 019, week 1); all 660 validation pairs were 256 × 128. No paired shape mismatch or header read failure was found. `ShapeBatchSampler` groups training slices by shape and shuffles within groups and across batches. Each epoch covers every slice once: 1,432 batches of eight and one batch of four. No resizing, cropping, padding, or sample removal is used. Loader content checks were exercised during the completed training and evaluation runs; this is not an expert audit of annotation correctness.
 
-## Planned Evaluation
+Images are displayed in stored array orientation. Anatomical directions and the physical meaning of the stored pixel spacing have not been verified. Pixel areas must not be presented as physical areas or distances.
 
-- Per-class Dice and IoU.
-- Baseline comparison using the same patient splits.
-- Parameter count, peak GPU memory, and per-case inference time.
-- Visual analysis of 3-5 representative failure cases.
-- An engineering recommendation based on measured results.
+![Training data preview](figures/training_data_preview.png)
 
-## Feasibility Review Status
+## Models
 
-The one-page feasibility review and tutor check-off are pending.
-These preliminary checks do not replace that requirement.
+### Standard U-Net
 
-## Data Acknowledgement and References
+`UNet2D` uses four max-pooling stages, two padded 3 × 3 convolutions with ReLU per feature block, skip concatenation, and transposed-convolution upsampling. It has one input channel, six output classes, 32 base channels, and **7,759,686 parameters**. It follows the U-Net design [1], with project-specific padding and width rather than an exact reproduction.
 
-Data were provided by HipMRI Study.
+### Improved U-Net
 
-- Dataset: Labelled weekly MR images of the male pelvis.
-  https://doi.org/10.25919/45t8-p065
-- Dowling et al. (2015), Automatic Substitute Computed Tomography
-  Generation and Contouring for Magnetic Resonance Imaging (MRI)-Alone
-  External Beam Radiation Therapy From Standard MRI Sequences.
-  https://doi.org/10.1016/j.ijrobp.2015.08.045
+`ImprovedUNet2D` is a documented 2D adaptation of [2]. It uses residual context blocks, instance normalization, LeakyReLU with slope 0.01, element-wise dropout of 0.3, stride-2 convolutions for downsampling, and nearest-neighbor upsampling followed by convolution. Encoder widths are 32, 64, 128, 256, and 512. Localization modules combine skips and reduce channels with 1 × 1 convolutions. Three segmentation heads at full, half, and quarter resolution are combined by successive upsampling and summation of logits. One loss is applied to the combined output; there are no separate auxiliary losses.
 
-Data use must follow the supplied terms, including non-commercial use,
-no attempts to identify or contact participants, and proper
-acknowledgement and citation.
+The model has **12,738,610 parameters**. Both models return raw six-class logits and use `argmax` at inference. The comparison measures the combined architecture changes, not the individual effect of each component. Parameter counts are not matched. Both models process individual slices; the improved model does not add inter-slice or 3D context. Input dimensions must be divisible by 16, and the improved model requires more than one bottleneck pixel for instance normalization.
 
-Datasets and model weights will not be committed to this repository.
+## Training and evaluation protocol
 
-## Artificial Intelligence Usage Disclosure
+The architecture comparison used the same splits, normalization, CE+Dice loss, Adam optimizer, learning rate 0.001, batch size 8, seed 42, and 20-epoch budget. Models started from random initialization. No augmentation, learning-rate schedule, mixed precision, or post-processing was used. Shape-grouped sampling used the same seed and epoch schedule. The best checkpoint was selected by validation prostate Dice, not test performance. The earlier pure-CE experiment is retained as a loss comparison.
 
-OpenAI ChatGPT/Codex assisted with understanding the assignment,
-setting up Rangpur, diagnosing Slurm settings, drafting preliminary
-data-check scripts, and preparing documentation.
+The combined loss is `CE + soft Dice loss` with weight 1. CE uses all pixels and classes. Soft Dice is averaged over ground-truth-positive slice/class pairs for labels 1–5; background and absent pairs are excluded from that term. CE still penalizes wrong-class predictions on negative slices. An all-background batch has a zero Dice-loss term. This training loss is distinct from the hard-label evaluation metric.
 
-Environment and data-check scripts were run on Rangpur and their
-outputs were inspected. Model implementation and training have not
-started. This disclosure will be updated as the project develops.
+History files retain CE separately. Epoch soft Dice loss is weighted by eligible slice/class counts. `total_batch_mean` is the slice-weighted mean of batch objectives; because its weighting differs, it need not equal epoch CE plus the reported epoch soft Dice loss.
 
-## Initial Visual Inspection
+### Primary metric
 
-The figure below shows training case 004 at week 0. Of its 60 slices,
-31 contain prostate label 5. Slices 22, 30, 37, 44, and 52 were selected
-across the prostate-positive slice range.
+Following tutor clarification, prostate Dice is calculated separately for every slice whose ground truth contains label 5, then averaged equally across those slices:
 
-![Training MRI, ground-truth masks, and organ overlays](figures/training_data_preview.png)
-
-The five displayed pairs show no obvious global displacement or flip.
-This is a limited visual check, not confirmation of all cases or
-fine boundary accuracy.
-
-The prostate label occupies a small region in slices 22 and 52 and
-larger regions in the selected intermediate slices. This supports
-including small-target slices in later performance analysis.
-
-Images are shown in stored array orientation. Anatomical directions
-have not been assigned. These are ground-truth previews, not model
-predictions or model failure cases.
-
-To reproduce the figure in an environment with NumPy, NiBabel, and
-Matplotlib installed, run from this project directory:
-
-```bash
-python visualize_data.py
+```text
+Dice(slice) = 2 * intersection / (predicted pixels + ground-truth pixels)
+Primary Dice = sum of eligible slice Dice / number of eligible slices
 ```
 
-## Dataset Loader
+Eligible slices with empty predictions score zero. Ground-truth-negative slices are excluded, even when false positives exist. No eligible slices means an unavailable metric, not zero or one. Dice sums and eligible counts are accumulated across batches; batch means or patient means are not averaged to form the primary metric. IoU uses intersection divided by union with the same eligibility rule. The same positive-slice convention is reported explicitly for each of the six classes. Per-case results and negative-slice false positives are separate supplements.
 
-`dataset.py` pairs images and masks using case, week, and slice IDs.
-It preserves the supplied training, validation, and test splits.
+Validation contained 254 prostate-positive and 406 prostate-negative slices. Test contained 195 prostate-positive and 345 prostate-negative slices. Test evaluation used frozen validation-selected checkpoints. Subsequent test analysis and figure selection did not change model settings.
 
-Each sample contains:
-- `image`: float32 tensor with shape [1, 256, 128].
-- `mask`: int64 tensor with shape [256, 128].
-- `case_id`, `week`, and `slice_id`: sample identifiers.
+## Verification and development evidence
 
-Images are standardized using the mean and population standard
-deviation of each full slice, with a minimum denominator of 1e-8.
-Masks are not normalized or remapped.
+- Data indexing, case separation, mask preservation, normalization, and batching checks passed. Shape-batch coverage and epoch shuffling checks passed after fixing variable-width handling.
+- Synthetic metric checks covered perfect overlap, complete misses, partial overlap, negative slices, no eligible slices, and unequal batch aggregation.
+- Loss checks covered gradient direction, near-perfect and wrong predictions, all-background batches, and absent-class exclusion.
+- Both model smoke tests passed forward/backward/update checks. The improved model also passed both image widths, active gradients for all three segmentation heads, evaluation repeatability, checkpoint round-trip, and old baseline checkpoint compatibility.
+- The standard U-Net overfit three training slices using CE (run 709904): prostate Dice 0.98749 after 400 updates. The improved model overfit the same slices using CE+Dice (run 712761): prostate Dice 1.0 after 400 updates, with close train/eval-mode results. These are pipeline checks, not an architecture comparison or test performance.
+- A three-epoch CE trial (709996) verified the full loop. Its best validation Dice was 0.71069. Full training and test jobs subsequently completed successfully.
+- The unified evaluator reproduced both prior validation prostate metrics and false-positive totals exactly. Final CSV and JSON results were reconciled by slice, class, and case.
 
-The loader checks shapes, affine alignment, finite values, integer
-mask values, and the allowed label range of 0-5.
+![Baseline training-subset diagnostic](figures/overfit_709904_predictions.png)
 
-File indexing reproduced the audited split counts and found no
-cross-split case overlap. A loading smoke test verified one training
-sample and a batch of four samples. The first sample's mask matched
-the original file exactly, and its normalized image had approximately
-zero mean and unit standard deviation.
+## Validation experiments
 
-These checks do not constitute full dataset validation. Data
-augmentation is not implemented yet.
+The values below use the independent validation inspection for consistent comparison. Small differences from training-log Dice were recorded (less than 0.00003).
 
-### AI Assistance Update
+| Model / loss | Training run | Selected epoch | Validation prostate Dice | Negative slices with prostate FP |
+|---|---|---:|---:|---:|
+| Standard U-Net / CE | 710034 | 16 | 0.73026 | 13 / 406 |
+| Standard U-Net / CE+Dice | 711775 | 10 | 0.76207 | 40 / 406 |
+| Improved U-Net / CE+Dice | 712829 | 3 | 0.76886 | 52 / 406 |
 
-ChatGPT/Codex assisted with drafting the dataset loader and its
-smoke-test commands. The commands were executed on Rangpur, and the
-reported checks passed. Full dataset validation and model training
-remain pending.
+CE+Dice reduced empty predictions on positive validation slices from 18 to 4, but increased negative-slice false positives. The architecture change then reduced empty predictions from 4 to 3 and zero-overlap predictions from 8 to 4. Its validation gain came from the 1–100-pixel target group; the other two area-group means decreased. Area groups were exploratory, not clinical size thresholds.
 
-## Standard 2D U-Net Baseline
+For the improved model, training CE fell from 0.09754 to 0.02130 while validation CE rose from 0.09214 to 0.17878. The highest validation Dice occurred at epoch 3. This is consistent with overfitting and supports using the saved best checkpoint rather than the last epoch. No extra training was chosen using test results.
 
-`modules.py` implements a standard U-Net baseline with four
-downsampling stages, skip connections, transposed-convolution
-upsampling, and two padded 3x3 convolutions per feature block.
+## Final test results
 
-The configuration uses one input channel, six output classes,
-and 32 base channels. It contains 7,759,686 trainable parameters.
-The output contains raw logits; softmax is not applied in the model.
+Test job 713255 completed with exit code 0. Checkpoints were standard U-Net run 711775 epoch 10 and Improved U-Net run 712829 epoch 3. Both passed the prostate Dice target of 0.75. This target alone does not establish full assignment completion or deployment suitability.
 
-Reference: Ronneberger et al. (2015), U-Net: Convolutional Networks
-for Biomedical Image Segmentation.
-https://arxiv.org/abs/1505.04597
+## Class results
 
-This baseline uses padded convolutions and a base width of 32.
-It is not an exact reproduction of every original paper setting
-and is not the project's planned Improved U-Net model.
+| Class | Eligible slices | Standard Dice | Improved Dice | Standard IoU | Improved IoU |
+|---|---:|---:|---:|---:|---:|
+| Background | 540 | 0.99671 | 0.99603 | 0.99345 | 0.99209 |
+| Body | 540 | 0.98430 | 0.98448 | 0.96914 | 0.96947 |
+| Bones | 540 | 0.91803 | 0.92417 | 0.85275 | 0.86174 |
+| Bladder | 401 | 0.94331 | 0.94512 | 0.90197 | 0.90208 |
+| Rectum | 220 | 0.82078 | 0.81171 | 0.72021 | 0.70201 |
+| Prostate | 195 | 0.77929 | 0.80288 | 0.67599 | 0.69966 |
 
-### Model Smoke Test
+## Prostate by case
 
-`check_model.py` was run on an NVIDIA A100-PCIE-40GB through
-`check_model.sh`.
-
-- Input shape: [2, 1, 256, 128].
-- Output shape: [2, 6, 256, 128].
-- Initial cross-entropy: approximately 1.6542.
-- All trainable parameters received finite gradients.
-- The output-layer weights changed after one optimizer step.
-- Model parameters remained finite after the update.
-
-This verifies a forward pass, backward pass, and parameter update.
-It does not establish segmentation accuracy, convergence, or
-generalization. The two samples came from the training split.
-
-ChatGPT/Codex assisted with drafting the baseline and smoke-test
-scripts. The test was executed on Rangpur and its output was inspected.
-
-## Prostate Dice Evaluation Protocol
-
-Following tutor clarification, prostate test Dice will be calculated
-for each slice whose ground-truth mask contains prostate label 5,
-then averaged equally across those slices. Slices without ground-truth
-prostate pixels will be excluded from this metric. Eligible slices
-with no predicted prostate pixels will receive a Dice score of zero.
-
-Across batches, Dice sums and eligible slice counts are accumulated
-before computing the final mean. Batch means and patient means are
-not averaged to obtain the primary score. If no slices are eligible,
-the metric is undefined and reported as unavailable.
-
-Per-patient results and false positives on ground-truth-negative
-slices will be reported separately.
-
-Synthetic checks in check_metrics.py verified perfect predictions,
-complete misses, partial overlap, excluded negative slices, and
-aggregation across unequal batches.
-
-## Small Training Subset Overfit Check
-
-Standard U-Net was trained from random initialization on training
-case 004, week 0, slices 30, 37, and 44. The run used seed 42,
-cross-entropy loss, Adam with a learning rate of 0.001, and 400
-updates on the same three-slice batch without augmentation.
-
-Cross-entropy decreased from 1.801918 to 0.014945.
-Final mean prostate Dice was 0.987492 across three eligible slices.
-Rectum Dice was 0.968280 on its single eligible slice.
-
-Visual inspection showed close agreement with the training masks.
-Remaining errors were mainly near boundaries. The error panel marks
-all misclassified pixels and does not separate false positives from
-false negatives.
-
-![Training subset overfit check](figures/overfit_709904_predictions.png)
-
-The metric history is saved in
-experiment_records/overfit_709904_history.csv.
-
-The script reported 4.33 seconds for its training and evaluation loop
-and 0.294 GiB peak PyTorch allocated GPU memory. These measurements
-exclude initial data loading and final output generation. They do
-not represent full-dataset training time or total GPU process memory.
-
-This diagnostic supports basic learning-pipeline functionality.
-It is not validation or test performance and does not establish the
-assignment's test Dice target. The final training loss remains to
-be selected using training and validation evidence.
-
-ChatGPT/Codex assisted with drafting the metric and overfit-check
-scripts and interpreting their outputs. Metric checks and the
-overfit experiment were executed on Rangpur, and the prediction
-figure was visually inspected.
-
-## Full Training Trial and Variable Image Sizes
-
-The first full training attempt stopped because the loader assumed
-all images had shape 256 x 128. That assumption came from a limited
-93-pair sample and was not valid for the full training set.
-
-A subsequent header audit found:
-- Training: 11,400 pairs at 256 x 128 and 60 pairs at 256 x 144.
-- Validation: 660 pairs at 256 x 128.
-- No image-mask shape mismatches or header read failures.
-
-The loader now accepts paired 2D shapes divisible by 16.
-The previously documented [1, 256, 128] image shape describes the
-initial sample; the general sample format is [1, H, W], with masks
-of shape [H, W].
-
-ShapeBatchSampler groups training samples by shape, shuffles samples
-within each group, and shuffles batch order each epoch. No resizing,
-cropping, padding, or sample removal is used. Coverage checks confirmed
-11,460 unique samples per epoch, in 1,432 batches of eight and one
-batch of four. Both observed shapes loaded successfully.
-
-### Three-Epoch Baseline Trial
-
-Run: train_trial_709996.
-
-The standard U-Net was trained from random initialization using
-cross-entropy, Adam, learning rate 0.001, batch size 8, and seed 42.
-No augmentation or mixed precision was used. Validation did not
-update model parameters, and no test data were evaluated.
-
-| Epoch | Training CE | Validation CE | Validation prostate Dice |
+| Case | Eligible slices | Standard Dice | Improved Dice |
 |---|---:|---:|---:|
-| 1 | 0.250125 | 0.106568 | 0.556327 |
-| 2 | 0.061566 | 0.075206 | 0.710694 |
-| 3 | 0.048912 | 0.076103 | 0.704624 |
+| 40 | 141 | 0.80091 | 0.81509 |
+| 41 | 22 | 0.77786 | 0.80564 |
+| 42 | 32 | 0.68499 | 0.74719 |
 
-Epoch 2 produced the highest validation prostate Dice and was saved
-as best.pt. The last checkpoint corresponds to epoch 3.
+## Prostate target area groups
 
-Each validation evaluation included 254 prostate-positive slices and
-excluded 406 prostate-negative slices from the primary Dice metric.
-The numbers of negative slices with prostate false positives were
-4, 9, and 7 across epochs 1, 2, and 3.
+Exploratory pixel-area groups; not clinical size thresholds.
 
-The three training and validation loops took approximately 289 seconds
-in total, excluding initialization, checkpoint saving, and queue time.
-Recent epochs required about 99 seconds each for training plus
-validation. Peak PyTorch allocated and reserved GPU memory were
-approximately 0.688 GiB and 1.225 GiB, respectively. These are not
-measurements of total GPU process memory.
+| GT area | Slices | Standard Dice | Improved Dice | Standard empty / zero overlap | Improved empty / zero overlap |
+|---|---:|---:|---:|---:|---:|
+| 1-100 | 28 | 0.42486 | 0.48749 | 1 / 2 | 1 / 2 |
+| 101-500 | 146 | 0.83149 | 0.85274 | 1 / 1 | 0 / 0 |
+| 501+ | 21 | 0.88889 | 0.87680 | 0 / 0 | 0 / 0 |
 
-![Three-epoch baseline trial](figures/train_trial_709996_curves.png)
+## Inference cost
 
-Configuration, metric history, and per-class validation summaries
-are stored in experiment_records/train_trial_709996/.
+A100, float32, batch size 1, 10 warmup forwards per shape and case, three timing repeats. Times below are per-case medians. CPU-cached wall time includes transfers, forward, and argmax; excludes disk reading, normalization, metrics, and saving. GPU time covers forward and argmax. Cases include all available weeks.
 
-This trial establishes full training-loop operability and an initial
-compute estimate. It does not establish test performance or final
-convergence. The small validation decrease at epoch 3 alone is not
-sufficient evidence of overfitting.
+| Case | Slices / sessions | Standard GPU seconds | Improved GPU seconds | Standard cached wall seconds | Improved cached wall seconds |
+|---|---:|---:|---:|---:|---:|
+| 40 | 420 / 7 | 0.9431 | 2.7939 | 1.0226 | 2.8765 |
+| 41 | 60 / 1 | 0.1347 | 0.3972 | 0.1456 | 0.4083 |
+| 42 | 60 / 1 | 0.1343 | 0.3969 | 0.1454 | 0.4080 |
 
-ChatGPT/Codex assisted with the training scripts, shape-handling fix,
-checks, and experiment documentation. Commands were executed on
-Rangpur and their reported outputs were inspected.
+UNet2D: 7,759,686 parameters; peak allocated inference memory 0.05794 GiB. Weighted GPU time per slice (sum of case medians / 540): 2.245 ms.
+
+ImprovedUNet2D: 12,738,610 parameters; peak allocated inference memory 0.09460 GiB. Weighted GPU time per slice (sum of case medians / 540): 6.644 ms.
+
+## False positives and compute tradeoffs
+
+On the 345 prostate-negative test slices, the standard model produced false positives on 28 slices (8.12%), versus 48 (13.91%) for the improved model. Total false-positive pixels increased from 560 to 1,744. This cost is not captured by the positive-slice Dice score.
+
+| Resource | Standard U-Net + CE+Dice | Improved U-Net + CE+Dice |
+|---|---:|---:|
+| Parameters | 7,759,686 | 12,738,610 |
+| Peak allocated training memory, batch 8 | 0.6884 GiB | 2.2031 GiB |
+| Peak reserved training memory | 1.2246 GiB | 3.4199 GiB |
+| Peak allocated inference memory, batch 1 | 0.05794 GiB | 0.09460 GiB |
+| Weighted GPU inference time per slice | 2.245 ms | 6.644 ms |
+
+Training peak values include the training/validation loop. PyTorch allocated and reserved memory are different measures and are not total GPU process memory. Training and inference memory must not be compared as if they used the same workload. GPU inference time includes forward and argmax, excluding transfer and disk loading. The per-case table above provides the separate CPU-cached wall-time measurement. All timings come from one job with fixed model order and three repeats; no cross-device benchmark is claimed.
+
+## Test failure analysis
+
+### Scope and selection
+
+Five examples were selected after the frozen test evaluation (run 713255) to illustrate different prostate segmentation errors. They span three patients, with three examples from case 42. They are descriptive examples, not a random sample or an estimate of error frequency. No model settings were changed using these examples.
+
+Sources are the saved prediction masks, the five comparison figures, and `selection.json`. Red denotes false-positive pixels and cyan denotes false-negative pixels. Images use stored array orientation; anatomical directions, prostate base/apex identity, and physical distances have not been established. Errors are measured against the supplied labels.
+
+### 1. Complete omission of a small target
+
+Case 42, week 0, slice 40 contains 69 prostate pixels. Both models predict none, giving Dice 0, FP 0, and FN 69. The overlay shows the entire labeled target in cyan, with no predicted region. The improved architecture does not resolve this failure.
+
+The small target provides limited spatial evidence. Loss of fine features during downsampling is a possible explanation, but this example does not establish the cause. An empty prediction must not be treated as evidence that the target is absent.
+
+![Complete omission](figures/test_failures/test_case_042_week_0_slice_40.png)
+
+### 2. Non-empty prediction at the wrong location
+
+Case 42, week 0, slice 9 contains only 8 target pixels. The standard model predicts 19 pixels and the improved model predicts 40. Neither prediction overlaps the target, so both score Dice 0 and FN 8. The red and cyan regions are close but separate in the displayed overlay.
+
+This differs from an empty prediction: a visible prediction can still miss the entire target. For an eight-pixel target, even a small spatial mismatch can remove all overlap. Fine localization remains unreliable in this example; the larger prediction does not recover the target. No distance in millimeters is inferred.
+
+![No target overlap](figures/test_failures/test_case_042_week_0_slice_9.png)
+
+### 3. Under-segmentation of a larger target
+
+Case 42, week 0, slice 16 contains 457 target pixels. Both predictions cover an inner portion while leaving a visible cyan region around parts of the target. The standard model has FN 171 and FP 13, with Dice 0.7566. The improved model has FN 208 and FP 9, with Dice 0.6965.
+
+The improved model reduces false positives slightly but omits more of the target. This shows that a smaller predicted region is not necessarily a better contour. Unclear local boundaries or a learned preference for smaller shapes could contribute, but neither explanation has been tested.
+
+![Under-segmentation](figures/test_failures/test_case_042_week_0_slice_16.png)
+
+### 4. Over-segmentation despite complete target coverage
+
+Case 41, week 0, slice 39 contains 97 target pixels. Both models cover every target pixel (FN 0), but their predicted regions extend visibly beyond the label. The standard model predicts 340 pixels, including 243 false positives, and scores Dice 0.4439. The improved model predicts 324 pixels, including 227 false positives, and scores Dice 0.4608.
+
+The improvement is small and substantial excess area remains. Complete target coverage alone therefore does not establish boundary accuracy. Similar surrounding appearance is a possible source of confusion, not a confirmed explanation or a diagnosis of the surrounding tissue.
+
+![Over-segmentation](figures/test_failures/test_case_041_week_0_slice_39.png)
+
+### 5. A false region on a GT-negative slice
+
+Case 40, week 3, slice 33 has no ground-truth prostate pixels. The standard model predicts one pixel, while the improved model produces a visibly compact region of 227 pixels. All predicted pixels are false positives relative to the supplied annotation.
+
+Dice is N/A for this slice under the tutor's positive-slice protocol. It must not be entered as zero or one in the primary average. This example illustrates a risk that the main Dice score does not capture, so negative-slice false-positive counts and areas must be reported separately. The annotation does not support a claim about clinical organ absence.
+
+![False positive on a negative slice](figures/test_failures/test_case_040_week_3_slice_33.png)
+
+### Engineering recommendation
+
+The improved model raises test prostate Dice from 0.77929 to 0.80288, but negative slices with prostate false positives increase from 28/345 to 48/345. It also has about 1.64 times as many parameters and takes about 2.96 times the measured GPU inference time per slice. Rectum Dice decreases from 0.82078 to 0.81171. The mean prostate improvement does not remove complete omissions, location errors, or contour errors.
+
+For a resource-limited annotation prototype, the standard U-Net is a reasonable default when speed and fewer false-positive slices matter most. The improved model is an option when higher prostate overlap is the main priority and the extra review and compute costs are acceptable. Actual editing time and user benefit were not measured, so neither model is shown to reduce annotation workload. Both require review of every proposed contour, including slices with empty predictions. These results do not establish suitability for clinical use.
+
+Both networks process each slice independently. Multi-scale 2D features are not inter-slice context, and this experiment does not show whether 3D context would solve the remaining failures. Future studies could investigate adjacent-slice information, fine-resolution features, and uncertainty-based review flags using training/validation data and a new held-out evaluation. These are future hypotheses, not changes to apply after inspecting this test set.
+
+Only three test patients were evaluated, and case 40 contributes 141 of the 195 eligible prostate slices. The selected figures provide qualitative boundary evidence, not a numerical boundary-distance benchmark. No statistical significance, clinical benefit, or verified base/apex localization is claimed.
+
+## Environment and reproduction
+
+Experiments ran on Rangpur using an NVIDIA A100-PCIE-40GB, PyTorch 2.14.1+cu130, and CUDA build 13.0. The environment uses Python 3.11, NumPy, NiBabel, and Matplotlib. Exact package snapshots are saved by the job scripts in each run's `environment.txt`. A GPU job used partition/account `comp3710`, one GPU, two CPUs, and `--mem=0` for this cluster's configuration. These Slurm settings are site-specific.
+
+From the project directory on a system with access to the shared data:
+
+```bash
+source "$HOME/miniconda3/bin/activate"
+conda activate torch
+sbatch train_ce_dice.sh
+sbatch train_improved.sh
+```
+
+Training jobs save source snapshots, configuration, history, best/last checkpoints, and per-class validation results under `runs/`. The improved training job also runs independent validation inspection. New job IDs create new directories; they will not reproduce the historical directory names automatically. Training must start from random weights, not an overfit-check checkpoint.
+
+The equivalent training command for either model, inside an allocated GPU job, is:
+
+```bash
+python train.py --model ImprovedUNet2D --loss ce_dice --dice-weight 1.0 \
+    --epochs 20 --batch-size 8 --learning-rate 0.001 --seed 42 \
+    --output runs/new_improved_experiment
+```
+
+Use `--model UNet2D` and a new output directory for the standard model. Output directories must not already exist. The code sets seeds and deterministic cuDNN options, but exact reproducibility across software/hardware versions is not established.
+
+To evaluate newly trained checkpoints, set their actual paths and run inside a GPU allocation:
+
+```bash
+python evaluate_models.py \
+    --standard runs/ce_dice_711775/results/best.pt \
+    --improved runs/improved_712829/results/best.pt \
+    --split test --repeats 3 --output runs/new_test_evaluation
+```
+
+These example paths identify the reported experiments. Weights are not distributed in Git, so a fresh checkout requires training and replacement of both paths. `--split validate` is available for checking the evaluator before final testing. `predict.py` provides validation-only inspection. The unified evaluator provides six-class validation or test metrics and saves prediction masks. Repeated test access must not be used for tuning.
+
+To reproduce the five figures from the stored test predictions, on a CPU compute node:
+
+```bash
+python plot_test_failures.py --results runs/eval_test_713255/results \
+    --output runs/new_test_failure_figures
+```
+
+## Code and evidence map
+
+| File or directory | Purpose |
+|---|---|
+| `modules.py` | Standard and improved model definitions |
+| `dataset.py` | NIfTI pairing, loading, validation, normalization |
+| `sampling.py` | Shape-grouped training batches |
+| `losses.py` | CE+Dice objective |
+| `metrics.py` | Positive-slice Dice/IoU and negative-slice FP counts |
+| `train.py` | Training, validation, history, checkpoint selection |
+| `predict.py` | Validation inspection and prostate plots |
+| `evaluate_models.py` | Frozen-checkpoint six-class evaluation and profiling |
+| `plot_test_failures.py` | Selected examples from saved predictions |
+| `check_*.py`, `overfit_*.py` | Diagnostic checks |
+| `*.sh` | Rangpur job entry points |
+| `experiment_records/` | Retained reports and compact metric evidence |
+| `figures/` | Report figures |
+| `runs/` | Local experiment outputs, excluded from Git |
+
+The accompanying records include the loss comparison, architecture comparison, final test tables, and detailed failure analysis. Raw MRI data, complete prediction archives, and model weights must remain outside Git. Commit only the selected report figures and compact records needed to support the report.
+
+## Feasibility and submission status
+
+The completed data checks, GPU smoke tests, overfit checks, full training runs, and final evaluation establish technical feasibility on the tested A100. The initial data-shape assumption failed and was corrected without dropping slices. The main remaining limitations are few independent patients, imperfect contours, negative-slice false positives, and uncertain physical spatial metadata.
+
+The one-page feasibility document was drafted separately. Tutor check-off and formal submission status have not been verified in this report; they must be confirmed against the course requirements. No unverified approval is claimed.
+
+- Confirm the feasibility review submission and tutor check-off.
+- Verify all referenced source files, selected figures, and experiment records are committed on `topic-recognition`.
+- Complete the required GitHub pull request and README PDF submission.
+- Inspect the exported PDF for readable tables and figures.
+- Address the required code review and record responses and changes.
+
+## Data acknowledgement and references
+
+Data were provided by HipMRI Study. Data use follows the supplied non-commercial terms, including no attempts to identify or contact participants and proper acknowledgement. The data provider does not guarantee annotation correctness.
+
+1. Ronneberger et al. (2015). U-Net: Convolutional Networks for Biomedical Image Segmentation. https://arxiv.org/abs/1505.04597
+2. Isensee et al. (2018). Brain Tumor Segmentation and Radiomics Survival Prediction: Contribution to the BRATS 2017 Challenge. https://arxiv.org/abs/1802.10508
+3. HipMRI dataset: Labelled weekly MR images of the male pelvis. https://doi.org/10.25919/45t8-p065
+4. Dowling et al. (2015). Automatic Substitute Computed Tomography Generation and Contouring for Magnetic Resonance Imaging (MRI)-Alone External Beam Radiation Therapy From Standard MRI Sequences. https://doi.org/10.1016/j.ijrobp.2015.08.045
+
+## AI usage disclosure
+
+OpenAI ChatGPT/Codex assisted with interpreting requirements, Rangpur setup, Slurm troubleshooting, drafting and modifying model/data/loss/training/evaluation code, designing diagnostic checks, analysing logs and supplied metrics, creating plots, and drafting this report. AI assistance extended beyond language editing.
+
+Commands and GPU experiments were executed by the student on Rangpur. Reported outputs, CSV/JSON metrics, and selected images were supplied for review. AI-assisted checks included source inspection, syntax checks, metric reconciliation, and visual interpretation. A smoke test is not evidence of generalization. Some implementation choices and explanations were AI-proposed; plausible failure causes are labelled as hypotheses rather than established facts.
+
+The student remains responsible for understanding the submitted code, checking the final report and references, meeting course AI-use rules, and confirming required submissions and tutor review. Model predictions were not replaced by generated images. No claims of independent manual authorship or unverified course approval are made.
