@@ -100,6 +100,14 @@ CE+Dice reduced empty predictions on positive validation slices from 18 to 4, bu
 
 For the improved model, training CE fell from 0.09754 to 0.02130 while validation CE rose from 0.09214 to 0.17878. The highest validation Dice occurred at epoch 3. This is consistent with overfitting and supports using the saved best checkpoint rather than the last epoch. No extra training was chosen using test results.
 
+### Training curves and measured training budget
+
+![Training losses and validation prostate Dice](figures/training_curves.png)
+
+The curves are reconstructed from the original 20-epoch CSV logs, not from a new training run. They show training and validation CE and soft Dice losses, plus validation prostate Dice. Training hard Dice was not logged and is not invented. Selected epochs are 10 for standard U-Net and 3 for Improved U-Net.
+
+The standard run recorded 1,871.05 training seconds and 91.08 validation seconds (32.70 minutes combined). The improved run recorded 1,948.78 and 90.35 seconds (33.99 minutes combined). Together, these two comparison runs used about 1.11 hours of measured training/validation loop time. This excludes queueing, setup, checkpoint writing outside the timers, earlier experiments and diagnostic runs; it is not the full project GPU budget.
+
 ## Final test results
 
 Test job 713255 completed with exit code 0. Checkpoints were standard U-Net run 711775 epoch 10 and Improved U-Net run 712829 epoch 3. Both passed the prostate Dice target of 0.75. This target alone does not establish full assignment completion or deployment suitability.
@@ -221,7 +229,7 @@ Only three test patients were evaluated, and case 40 contributes 141 of the 195 
 
 ## Environment and reproduction
 
-Experiments ran on Rangpur using an NVIDIA A100-PCIE-40GB, PyTorch 2.14.1+cu130, and CUDA build 13.0. The environment uses Python 3.11, NumPy, NiBabel, and Matplotlib. Exact package snapshots are saved by the job scripts in each run's `environment.txt`. A GPU job used partition/account `comp3710`, one GPU, two CPUs, and `--mem=0` for this cluster's configuration. These Slurm settings are site-specific.
+Experiments ran on Rangpur using an NVIDIA A100-PCIE-40GB, PyTorch 2.14.1+cu130, and CUDA build 13.0. The environment uses Python 3.11, NumPy, NiBabel, and Matplotlib. The recorded direct package versions are NumPy 2.4.6, NiBabel 5.4.2 and Matplotlib 3.11.2. The run snapshot records torch 2.14.1 and torchvision 0.29.1; the runtime reported PyTorch 2.14.1+cu130. Python was recorded at the 3.11 series level, not an exact patch version. Package snapshots are saved by the job scripts in each run's `environment.txt`. These are observed experiment versions, not a verified installation recipe for other systems. A GPU job used partition/account `comp3710`, one GPU, two CPUs, and `--mem=0` for this cluster's configuration. These Slurm settings are site-specific.
 
 From the project directory on a system with access to the shared data:
 
@@ -253,13 +261,29 @@ python evaluate_models.py \
     --split test --repeats 3 --output runs/new_test_evaluation
 ```
 
-These example paths identify the reported experiments. Weights are not distributed in Git, so a fresh checkout requires training and replacement of both paths. `--split validate` is available for checking the evaluator before final testing. `predict.py` provides validation-only inspection. The unified evaluator provides six-class validation or test metrics and saves prediction masks. Repeated test access must not be used for tuning.
+These example paths identify the reported experiments. Weights are not distributed in Git, so a fresh checkout requires training and replacement of both paths. `--split validate` is available for checking the evaluator before final testing. `predict.py` defaults to validation inspection and supports explicit `--split test` for a frozen-checkpoint test demonstration. It prints prostate metrics and saves three GT-positive prediction/error examples. The split option was added after the reported evaluation; it does not change the frozen results. The unified evaluator provides six-class validation or test metrics and saves prediction masks. Repeated test access must not be used for tuning.
 
 To reproduce the five figures from the stored test predictions, on a CPU compute node:
 
 ```bash
 python plot_test_failures.py --results runs/eval_test_713255/results \
     --output runs/new_test_failure_figures
+```
+
+To demonstrate test inference with the required entry point, inside a GPU allocation:
+
+```bash
+python predict.py --checkpoint runs/improved_712829/results/best.pt \
+    --split test --output runs/new_test_prediction_demo
+```
+
+To regenerate the training curves on a CPU compute node:
+
+```bash
+python plot_training_history.py \
+    --standard experiment_records/standard_history.csv \
+    --improved experiment_records/improved_history.csv \
+    --output figures/training_curves.png
 ```
 
 ## Code and evidence map
@@ -272,7 +296,8 @@ python plot_test_failures.py --results runs/eval_test_713255/results \
 | `losses.py` | CE+Dice objective |
 | `metrics.py` | Positive-slice Dice/IoU and negative-slice FP counts |
 | `train.py` | Training, validation, history, checkpoint selection |
-| `predict.py` | Validation inspection and prostate plots |
+| `predict.py` | Validation or explicit test inspection and prostate plots |
+| `plot_training_history.py` | Training curves from recorded CSV histories |
 | `evaluate_models.py` | Frozen-checkpoint six-class evaluation and profiling |
 | `plot_test_failures.py` | Selected examples from saved predictions |
 | `check_*.py`, `overfit_*.py` | Diagnostic checks |
@@ -331,7 +356,8 @@ The main remaining limitations are few independent patients, imperfect contours,
 
 - Feasibility review: included in this README; tutor discussion and check-off completed.
 - Verify all referenced source files, selected figures, and experiment records are committed on `topic-recognition`.
-- Complete the required GitHub pull request and README PDF submission.
+- GitHub pull request opened: [PR #146](https://github.com/shakes76/PatternAnalysis-2026/pull/146).
+- Export the final README as a PDF and complete the Turnitin submission.
 - Inspect the exported PDF for readable tables and figures.
 - Address the required code review and record responses and changes.
 
@@ -344,10 +370,21 @@ Data were provided by HipMRI Study. Data use follows the supplied non-commercial
 3. HipMRI dataset: Labelled weekly MR images of the male pelvis. https://doi.org/10.25919/45t8-p065
 4. Dowling et al. (2015). Automatic Substitute Computed Tomography Generation and Contouring for Magnetic Resonance Imaging (MRI)-Alone External Beam Radiation Therapy From Standard MRI Sequences. https://doi.org/10.1016/j.ijrobp.2015.08.045
 
-## AI usage disclosure
+## Artificial Intelligence Usage Disclosure
 
 OpenAI ChatGPT/Codex assisted with interpreting requirements, Rangpur setup, Slurm troubleshooting, drafting and modifying model/data/loss/training/evaluation code, designing diagnostic checks, analysing logs and supplied metrics, creating plots, and drafting this report. AI assistance extended beyond language editing.
 
 Commands and GPU experiments were executed by the student on Rangpur. Reported outputs, CSV/JSON metrics, and selected images were supplied for review. AI-assisted checks included source inspection, syntax checks, metric reconciliation, and visual interpretation. A smoke test is not evidence of generalization. Some implementation choices and explanations were AI-proposed; plausible failure causes are labelled as hypotheses rather than established facts.
 
 The student remains responsible for understanding the submitted code, checking the final report and references, meeting course AI-use rules, and confirming required submissions and tutor review. Model predictions were not replaced by generated images. No claims of independent manual authorship or unverified course approval are made.
+
+## Final inference entry-point verification
+
+After adding explicit test-split support to `predict.py`, job 719450
+loaded the frozen Improved U-Net checkpoint from epoch 3 and processed
+all 540 test slices. The 195 eligible slices produced prostate Dice
+0.8028843775392076 and IoU 0.6996586435434642. The negative-slice
+false-positive counts were 48 slices and 1,744 pixels. These results
+exactly matched the original unified test evaluation. This was an
+entry-point verification; no retraining, model selection, or parameter
+tuning was performed.

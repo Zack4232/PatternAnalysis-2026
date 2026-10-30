@@ -1,4 +1,4 @@
-"""Inspect a saved U-Net on validation data without using the test set."""
+"""Inspect a frozen U-Net checkpoint on an explicitly selected data split."""
 
 import argparse
 import csv
@@ -23,7 +23,7 @@ def accumulate(total, current):
         total[key] = total.get(key, 0) + value
 
 
-def plot_failure(sample, prediction, dice, output):
+def plot_failure(sample, prediction, dice, output, split="validate"):
     image = sample["image"][0].numpy()
     target = sample["mask"].numpy() == 5
     predicted = prediction.numpy() == 5
@@ -61,7 +61,7 @@ def plot_failure(sample, prediction, dice, output):
         loc="upper center", bbox_to_anchor=(0.5, -0.02), fontsize=8,
     )
     fig.suptitle(
-        f"Validation case {sample['case_id']:03d}, "
+        f"{split.capitalize()} case {sample['case_id']:03d}, "
         f"week {sample['week']}, slice {sample['slice_id']}\n"
         f"Prostate Dice: {dice:.4f}; stored array orientation"
     )
@@ -74,6 +74,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--split", choices=("validate", "test"), default="validate")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -106,7 +107,7 @@ def main():
     print("Saved validation prostate Dice:", saved_dice, flush=True)
 
     data_root = checkpoint["config"]["data_root"]
-    dataset = HipMRIDataset(data_root, split="validate")
+    dataset = HipMRIDataset(data_root, split=args.split)
     args.output.mkdir(parents=True, exist_ok=False)
 
     total = {}
@@ -165,7 +166,7 @@ def main():
 
     overall = summarize_stats(total)
     summary = {
-        "split": "validate",
+        "split": args.split,
         "model_name": model_name,
         "checkpoint": str(args.checkpoint.resolve()),
         "checkpoint_epoch": epoch,
@@ -177,9 +178,10 @@ def main():
         },
         "figure_selection": "Three lowest-Dice ground-truth-positive slices",
     }
-    summary["dice_difference_from_training_log"] = (
-        overall["mean_dice"] - saved_dice
-    )
+    if args.split == "validate" and overall["mean_dice"] is not None:
+        summary["dice_difference_from_training_log"] = (
+            overall["mean_dice"] - saved_dice
+        )
     (args.output / "summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
@@ -190,10 +192,13 @@ def main():
             f"worst_{rank}_case_{sample['case_id']:03d}"
             f"_week_{sample['week']}_slice_{sample['slice_id']}.png"
         )
-        plot_failure(sample, prediction, dice, args.output / name)
+        plot_failure(sample, prediction, dice, args.output / name, split=args.split)
 
     print(json.dumps(summary, indent=2), flush=True)
-    print("Validation analysis complete. No test data were read.", flush=True)
+    if args.split == "validate":
+        print("Validation analysis complete. No test data were read.", flush=True)
+    else:
+        print("Frozen-checkpoint test inspection complete. Do not tune on these results.", flush=True)
 
 
 if __name__ == "__main__":
