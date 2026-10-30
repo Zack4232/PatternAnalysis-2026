@@ -283,13 +283,53 @@ python plot_test_failures.py --results runs/eval_test_713255/results \
 
 The accompanying records include the loss comparison, architecture comparison, final test tables, and detailed failure analysis. Raw MRI data, complete prediction archives, and model weights must remain outside Git. Commit only the selected report figures and compact records needed to support the report.
 
-## Feasibility and submission status
+## Feasibility review
 
-The completed data checks, GPU smoke tests, overfit checks, full training runs, and final evaluation establish technical feasibility on the tested A100. The initial data-shape assumption failed and was corrected without dropping slices. The main remaining limitations are few independent patients, imperfect contours, negative-slice false positives, and uncertain physical spatial metadata.
+The one-page feasibility review was prepared and discussed with the tutor, and tutor check-off was completed. Its content is included below; no separate upload of the written review is required. The initial plan and evidence are distinguished from the final project outcomes.
 
-The one-page feasibility document was drafted separately. Tutor check-off and formal submission status have not been verified in this report; they must be confirmed against the course requirements. No unverified approval is claimed.
+### Initial user need, scope and acceptance criteria
 
-- Confirm the feasibility review submission and tutor check-off.
+The intended user is an imaging specialist reviewing draft anatomical contours. This educational prototype segments six classes in HipMRI 2D slices, with particular attention to the prostate. It is not intended for clinical deployment. The engineering question is whether Improved U-Net improves difficult boundaries over standard 2D U-Net enough to justify its computing cost.
+
+The initial acceptance criteria were to:
+
+- Maintain patient-level separation and valid image-mask pairing.
+- Achieve a prostate test Dice of at least 0.75 and report per-class Dice, IoU and per-patient results.
+- Compare both models with the same splits and preprocessing, including analysis of small-target slices.
+- Complete training and inference on one A100 40 GB GPU and measure memory use and runtime.
+- Analyse three to five real prediction failures with masks and error overlays, and identify cases needing manual review.
+
+Following tutor clarification, prostate Dice is calculated for each slice containing ground-truth prostate label 5, then averaged equally across those slices. Slices without ground-truth prostate pixels are excluded. Eligible slices with no predicted prostate pixels receive a score of zero.
+
+### Initial model choice and course concepts
+
+The proposed main model was 2D Improved U-Net at Normal difficulty, with standard 2D U-Net as the baseline. Relevant course concepts include convolutional features, encoder-decoder networks, skip connections, class imbalance, and Dice/IoU evaluation. The training loss had not yet been selected at the time of the review.
+
+### Evidence available at the review
+
+The supplied splits contained 31 training cases (11,460 slices), four validation cases (660 slices), and three test cases (540 slices). Filename checks found no cross-split case overlap, missing pairs, or duplicate sample keys.
+
+A sample of 93 training pairs had matching 256 x 128 shapes and affine matrices, finite values, and integer labels. The six labels were background, body, bones, bladder, rectum, and prostate. Five slices from one training scan showed no obvious global misalignment. This was a limited sample check, not evidence that every image had the same shape.
+
+The loader passed sample and batch checks. The standard U-Net had 7,759,686 parameters and passed forward, backward, and parameter-update checks on an A100-PCIE-40GB. These checks established basic operability, not segmentation accuracy or convergence.
+
+### Initial risks, resource plan and fallback
+
+The identified risks were class imbalance, small prostate regions, few independent test patients, queue delays, and the 16 GB home-storage quota. The plan kept datasets in shared storage and limited saved checkpoints. Physical spacing needed verification before reporting distances in millimetres.
+
+The planned next steps were a small-subset overfit check, followed by a short training trial to measure time per epoch and peak GPU memory. The total training budget was not yet established. Validation data would guide model selection, while test data would not guide tuning.
+
+If resources were insufficient, the proposed options were a smaller batch size or an assessment of mixed-precision training. If the main model remained unworkable, the fallback was standard U-Net with a tutor discussion about the change in scope and difficulty. These were contingency plans, not claims that these changes were used.
+
+### Final feasibility outcome
+
+The completed data checks, GPU smoke tests, overfit checks, full training runs, and final evaluation establish technical feasibility on the tested A100. The initial data-shape assumption failed and was corrected with shape-grouped batches without dropping slices. Both models exceeded the planned prostate test Dice threshold: 0.7793 for standard U-Net with CE + Dice and 0.8029 for Improved U-Net. Five test failure examples are analysed above. Measured resource costs and the final training settings are reported in the experiment sections.
+
+The main remaining limitations are few independent patients, imperfect contours, negative-slice false positives, and uncertain physical spatial metadata. Meeting the Dice target does not establish clinical suitability or consistent improvement on every class or slice.
+
+## Submission status
+
+- Feasibility review: included in this README; tutor discussion and check-off completed.
 - Verify all referenced source files, selected figures, and experiment records are committed on `topic-recognition`.
 - Complete the required GitHub pull request and README PDF submission.
 - Inspect the exported PDF for readable tables and figures.
